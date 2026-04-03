@@ -5,11 +5,22 @@
   <meta charset="UTF-8">
   <title>家庭記帳</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!-- Chart.js -->
+
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
   <style>
-    body { font-family: sans-serif; padding: 20px; }
-    input, button { padding: 10px; margin-top: 10px; width: 100%; }
-    #hint { color: green; margin-top: 10px; }
+    body { font-family: sans-serif; padding: 16px; max-width: 600px; margin: auto; }
+    h2 { margin-top: 24px; }
+    input, button { padding: 10px; margin-top: 8px; width: 100%; }
+    #hint { color: green; margin-top: 8px; }
+    ul { padding-left: 16px; }
+    li { margin: 4px 0; }
+    .row { display: flex; gap: 8px; }
+    .row input { flex: 1; }
   </style>
+
 </head>
 <body>
 
@@ -23,28 +34,39 @@
 
 <button onclick="saveRecord()">儲存</button>
 
-<script>
-// ===== 地點資料（你之後可以改）=====
-const locations = [
-  {
-    name: "Costco",
-    lat: 25.033,
-    lng: 121.565,
-    radius: 150,
-    category: "採購",
-    note: "Costco"
-  },
-  {
-    name: "全聯",
-    lat: 25.032,
-    lng: 121.566,
-    radius: 120,
-    category: "日用品",
-    note: "全聯"
-  }
-];
+<h2>📍 新增地點（用當前位置）</h2>
 
-// ===== 距離計算 =====
+<input id="locName" placeholder="地點名稱（例：Costco）">
+<input id="locCategory" placeholder="預設分類（例：採購）">
+<input id="locNote" placeholder="預設備註（例：Costco）">
+<input id="locRadius" type="number" placeholder="範圍（公尺，建議150）">
+
+<button onclick="addLocation()">用目前GPS新增地點</button>
+
+<h2>📊 分類統計</h2>
+<canvas id="chart"></canvas>
+
+<h2>📜 記帳紀錄</h2>
+<ul id="recordList"></ul>
+
+<script>
+// ====== 初始化資料 ======
+function getLocations() {
+  return JSON.parse(localStorage.getItem("locations") || "[]");
+}
+
+function saveLocations(data) {
+  localStorage.setItem("locations", JSON.stringify(data));
+}
+
+// 預設地點（第一次用）
+if (!localStorage.getItem("locations")) {
+  saveLocations([
+    { name: "Costco", lat: 25.033, lng: 121.565, radius: 150, category: "採購", note: "Costco" }
+  ]);
+}
+
+// ====== 距離計算 ======
 function getDistance(lat1, lon1, lat2, lon2) {
   const R = 6371000;
   const toRad = x => x * Math.PI / 180;
@@ -60,8 +82,9 @@ function getDistance(lat1, lon1, lat2, lon2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
-// ===== 找最近地點 =====
+// ====== 找最近地點 ======
 function findNearest(userLat, userLng) {
+  const locations = getLocations();
   let nearest = null;
   let minDist = Infinity;
 
@@ -76,34 +99,29 @@ function findNearest(userLat, userLng) {
   return nearest;
 }
 
-// ===== 初始化 GPS =====
+// ====== GPS 初始化 ======
 function initGPS() {
-  if (!navigator.geolocation) return;
+  navigator.geolocation.getCurrentPosition(pos => {
+    const { latitude, longitude } = pos.coords;
+    window.currentLat = latitude;
+    window.currentLng = longitude;
 
-  navigator.geolocation.getCurrentPosition(
-    pos => {
-      const { latitude, longitude } = pos.coords;
-      const loc = findNearest(latitude, longitude);
+    const loc = findNearest(latitude, longitude);
 
-      if (loc) {
-        document.getElementById("category").value = loc.category;
-        document.getElementById("note").value = loc.note;
-        document.getElementById("hint").innerText = "📍 偵測到：" + loc.name;
-      } else {
-        document.getElementById("hint").innerText = "📍 未命中已設定地點";
-      }
-    },
-    err => {
-      document.getElementById("hint").innerText = "⚠️ 無法取得定位";
-      console.log(err);
+    if (loc) {
+      document.getElementById("category").value = loc.category;
+      document.getElementById("note").value = loc.note;
+      document.getElementById("hint").innerText = "📍 偵測到：" + loc.name;
+    } else {
+      document.getElementById("hint").innerText = "📍 未命中地點";
     }
-  );
+  });
 }
 
-// ===== 儲存記帳 =====
+// ====== 新增記帳 ======
 function saveRecord() {
   const record = {
-    amount: document.getElementById("amount").value,
+    amount: Number(document.getElementById("amount").value),
     category: document.getElementById("category").value,
     note: document.getElementById("note").value,
     time: new Date().toISOString()
@@ -113,11 +131,74 @@ function saveRecord() {
   data.push(record);
   localStorage.setItem("records", JSON.stringify(data));
 
+  renderRecords();
+  renderChart();
   alert("已儲存！");
 }
 
-// 啟動
+// ====== 顯示紀錄 ======
+function renderRecords() {
+  const data = JSON.parse(localStorage.getItem("records") || "[]");
+  const list = document.getElementById("recordList");
+
+  list.innerHTML = data
+    .map(r => `<li>${r.amount} 元 - ${r.category} - ${r.note}</li>`)
+    .join("");
+}
+
+// ====== 圖表 ======
+let chart;
+
+function renderChart() {
+  const data = JSON.parse(localStorage.getItem("records") || "[]");
+
+  const map = {};
+  data.forEach(r => {
+    map[r.category] = (map[r.category] || 0) + r.amount;
+  });
+
+  const labels = Object.keys(map);
+  const values = Object.values(map);
+
+  if (chart) chart.destroy();
+
+  chart = new Chart(document.getElementById("chart"), {
+    type: "pie",
+    data: {
+      labels: labels,
+      datasets: [{ data: values }]
+    }
+  });
+}
+
+// ====== 新增地點 ======
+function addLocation() {
+  if (!window.currentLat) {
+    alert("請先允許GPS");
+    return;
+  }
+
+  const newLoc = {
+    name: document.getElementById("locName").value,
+    lat: window.currentLat,
+    lng: window.currentLng,
+    radius: Number(document.getElementById("locRadius").value || 150),
+    category: document.getElementById("locCategory").value,
+    note: document.getElementById("locNote").value
+  };
+
+  const locations = getLocations();
+  locations.push(newLoc);
+  saveLocations(locations);
+
+  alert("地點已新增！");
+}
+
+// ====== 初始化 ======
 initGPS();
+renderRecords();
+renderChart();
+
 </script>
 
 </body>
