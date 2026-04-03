@@ -1,0 +1,125 @@
+<!DOCTYPE html>
+
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <title>家庭記帳</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    input, button { padding: 10px; margin-top: 10px; width: 100%; }
+    #hint { color: green; margin-top: 10px; }
+  </style>
+</head>
+<body>
+
+<h2>新增記帳</h2>
+
+<input id="amount" type="number" placeholder="金額">
+<input id="category" placeholder="分類">
+<input id="note" placeholder="備註">
+
+<div id="hint"></div>
+
+<button onclick="saveRecord()">儲存</button>
+
+<script>
+// ===== 地點資料（你之後可以改）=====
+const locations = [
+  {
+    name: "Costco",
+    lat: 25.033,
+    lng: 121.565,
+    radius: 150,
+    category: "採購",
+    note: "Costco"
+  },
+  {
+    name: "全聯",
+    lat: 25.032,
+    lng: 121.566,
+    radius: 120,
+    category: "日用品",
+    note: "全聯"
+  }
+];
+
+// ===== 距離計算 =====
+function getDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const toRad = x => x * Math.PI / 180;
+
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+
+  const a =
+    Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+    Math.sin(dLon/2) * Math.sin(dLon/2);
+
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+}
+
+// ===== 找最近地點 =====
+function findNearest(userLat, userLng) {
+  let nearest = null;
+  let minDist = Infinity;
+
+  locations.forEach(loc => {
+    const dist = getDistance(userLat, userLng, loc.lat, loc.lng);
+    if (dist < loc.radius && dist < minDist) {
+      nearest = loc;
+      minDist = dist;
+    }
+  });
+
+  return nearest;
+}
+
+// ===== 初始化 GPS =====
+function initGPS() {
+  if (!navigator.geolocation) return;
+
+  navigator.geolocation.getCurrentPosition(
+    pos => {
+      const { latitude, longitude } = pos.coords;
+      const loc = findNearest(latitude, longitude);
+
+      if (loc) {
+        document.getElementById("category").value = loc.category;
+        document.getElementById("note").value = loc.note;
+        document.getElementById("hint").innerText = "📍 偵測到：" + loc.name;
+      } else {
+        document.getElementById("hint").innerText = "📍 未命中已設定地點";
+      }
+    },
+    err => {
+      document.getElementById("hint").innerText = "⚠️ 無法取得定位";
+      console.log(err);
+    }
+  );
+}
+
+// ===== 儲存記帳 =====
+function saveRecord() {
+  const record = {
+    amount: document.getElementById("amount").value,
+    category: document.getElementById("category").value,
+    note: document.getElementById("note").value,
+    time: new Date().toISOString()
+  };
+
+  const data = JSON.parse(localStorage.getItem("records") || "[]");
+  data.push(record);
+  localStorage.setItem("records", JSON.stringify(data));
+
+  alert("已儲存！");
+}
+
+// 啟動
+initGPS();
+</script>
+
+</body>
+</html>
+
