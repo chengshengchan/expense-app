@@ -3,235 +3,213 @@
 <html lang="zh-TW">
 <head>
 <meta charset="UTF-8">
-<title>家庭記帳 Pro</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>家庭記帳</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
 <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
 <style>
-body { font-family: sans-serif; padding: 16px; max-width: 700px; margin:auto;}
-input, button { padding:8px; margin:4px 0; width:100%;}
-.row { display:flex; gap:6px;}
-.row input { flex:1;}
-ul { padding-left:16px;}
-li { margin:6px 0;}
-small { color:gray;}
+body { font-family: -apple-system; margin:0; background:#f5f5f5;}
+.container { padding:16px; }
+.card { background:white; padding:16px; border-radius:12px; margin-bottom:12px; box-shadow:0 2px 6px rgba(0,0,0,0.05);}
+input,button { width:100%; padding:10px; margin-top:8px; border-radius:8px; border:1px solid #ddd;}
+button { background:#007AFF; color:white; border:none;}
+.tabs { display:flex; position:fixed; bottom:0; width:100%; background:white; border-top:1px solid #ddd;}
+.tabs button { flex:1; border:none; background:white; padding:12px;}
+.active { font-weight:bold; color:#007AFF;}
+.hidden { display:none;}
 </style>
 
 </head>
 
 <body>
 
-<h2>新增記帳</h2>
+<div class="container">
+
+<!-- 記帳 -->
+
+<div id="tab-expense">
+<div class="card">
+<h3>新增記帳</h3>
 <input id="amount" type="number" placeholder="金額">
 <input id="category" placeholder="分類">
 <input id="note" placeholder="備註">
 <div id="hint"></div>
 <button onclick="saveRecord()">儲存</button>
+</div>
 
-<h2>🔍 篩選</h2>
-<input id="filterDate" type="date">
-<input id="filterCategory" placeholder="分類">
-<input id="filterNote" placeholder="備註">
-<button onclick="applyFilter()">套用篩選</button>
-
-<h2>📊 圖表</h2>
-<canvas id="chart"></canvas>
-
-<h2>📜 記帳紀錄</h2>
+<div class="card">
+<h3>記錄</h3>
 <ul id="recordList"></ul>
+</div>
+</div>
 
-<h2>📍 地點管理</h2>
+<!-- 圖表 -->
+
+<div id="tab-chart" class="hidden">
+<div class="card">
+<h3>分類統計</h3>
+<canvas id="chart"></canvas>
+</div>
+</div>
+
+<!-- 地點 -->
+
+<div id="tab-location" class="hidden">
+<div class="card">
+<h3>新增地點</h3>
 <input id="locName" placeholder="名稱">
 <input id="locCategory" placeholder="分類">
 <input id="locNote" placeholder="備註">
-<input id="locRadius" placeholder="半徑(公尺)">
-<button onclick="addLocation()">新增目前GPS地點</button>
+<input id="locRadius" placeholder="範圍(150)">
+<button onclick="addLocation()">用GPS新增</button>
+</div>
+
+<div class="card">
 <ul id="locationList"></ul>
+</div>
+</div>
 
-<script>
-let chart;
-let editIndex = null;
-let editLocIndex = null;
+</div>
 
-function getRecords(){return JSON.parse(localStorage.getItem("records")||"[]")}
-function saveRecords(d){localStorage.setItem("records",JSON.stringify(d))}
-function getLocations(){return JSON.parse(localStorage.getItem("locations")||"[]")}
-function saveLocations(d){localStorage.setItem("locations",JSON.stringify(d))}
+<!-- tabs -->
+
+<div class="tabs">
+<button onclick="showTab('expense')" class="active">記帳</button>
+<button onclick="showTab('chart')">圖表</button>
+<button onclick="showTab('location')">地點</button>
+</div>
+
+<script type="module">
+// ===== Firebase =====
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyCflvPNFJpZwdLedNuyAFxG_4Fl8g0yuXU",
+  authDomain: "family-expense-d3fc6.firebaseapp.com",
+  projectId: "family-expense-d3fc6",
+  storageBucket: "family-expense-d3fc6.firebasestorage.app",
+  messagingSenderId: "1082949186120",
+  appId: "1:1082949186120:web:b08dede5942191c6749e7d"
+};
+
+const app = initializeApp(firebaseConfig);
+const db = getFirestore(app);
+
+// ===== familyId =====
+const familyId = "demo-family";
 
 // ===== GPS =====
-function initGPS(){
- navigator.geolocation.getCurrentPosition(pos=>{
-   window.lat=pos.coords.latitude
-   window.lng=pos.coords.longitude
-   const loc=findNearest(lat,lng)
-   if(loc){
-     category.value=loc.category
-     note.value=loc.note
-     hint.innerText="📍 "+loc.name
-   }
- })
-}
+let lat,lng;
+navigator.geolocation.getCurrentPosition(pos=>{
+  lat=pos.coords.latitude;
+  lng=pos.coords.longitude;
+});
 
-// ===== 距離 =====
-function dist(a,b,c,d){
- const R=6371000
- const toRad=x=>x*Math.PI/180
- const dLat=toRad(c-a)
- const dLon=toRad(d-b)
- const A=Math.sin(dLat/2)**2+Math.cos(toRad(a))*Math.cos(toRad(c))*Math.sin(dLon/2)**2
- return R*2*Math.atan2(Math.sqrt(A),Math.sqrt(1-A))
-}
-
-// ===== 找最近 =====
-function findNearest(lat,lng){
- let res=null,min=Infinity
- getLocations().forEach(l=>{
-   const d=dist(lat,lng,l.lat,l.lng)
-   if(d<l.radius && d<min){res=l;min=d}
- })
- return res
-}
+// ===== 資料 =====
+const recordRef = collection(db,"records");
+const locRef = collection(db,"locations");
 
 // ===== 記帳 =====
-function saveRecord(){
- const data=getRecords()
- const rec={
-   amount:+amount.value,
-   category:category.value,
-   note:note.value,
-   time:new Date().toISOString()
- }
+window.saveRecord = async ()=>{
+ await addDoc(recordRef,{
+  familyId,
+  amount:+amount.value,
+  category:category.value,
+  note:note.value,
+  time:new Date().toISOString()
+ });
+};
 
- if(editIndex!==null){
-   data[editIndex]=rec
-   editIndex=null
- }else{
-   data.push(rec)
- }
+// ===== 即時監聽（關鍵）=====
+onSnapshot(recordRef,snap=>{
+ const data=[];
+ snap.forEach(doc=>{
+  const d=doc.data();
+  if(d.familyId===familyId){
+    data.push({...d,id:doc.id});
+  }
+ });
 
- saveRecords(data)
- renderAll()
-}
-
-function editRecord(i){
- const r=getRecords()[i]
- amount.value=r.amount
- category.value=r.category
- note.value=r.note
- editIndex=i
-}
-
-function deleteRecord(i){
- const d=getRecords()
- d.splice(i,1)
- saveRecords(d)
- renderAll()
-}
-
-// ===== 篩選 =====
-function applyFilter(){
- renderAll()
-}
-
-function filterData(data){
- const d=filterDate.value
- const c=filterCategory.value
- const n=filterNote.value
-
- return data.filter(r=>{
-   return (!d || r.time.startsWith(d)) &&
-          (!c || r.category.includes(c)) &&
-          (!n || r.note.includes(n))
- })
-}
+ renderRecords(data);
+ renderChart(data);
+});
 
 // ===== UI =====
-function renderRecords(){
- const data=filterData(getRecords())
- recordList.innerHTML=data.map((r,i)=>`
-   <li>
-   ${r.amount} - ${r.category} - ${r.note}
-   <br><small>${r.time}</small><br>
-   <button onclick="editRecord(${i})">編輯</button>
-   <button onclick="deleteRecord(${i})">刪除</button>
-   </li>
- `).join("")
+function renderRecords(data){
+ recordList.innerHTML=data.map(r=>`
+ <li>
+ ${r.amount} - ${r.category}
+ <button onclick="del('${r.id}')">刪</button>
+ </li>`).join("");
 }
 
-// ===== 圖表 =====
-function renderChart(){
- const data=filterData(getRecords())
- const map={}
- data.forEach(r=>map[r.category]=(map[r.category]||0)+r.amount)
+// ===== 刪除 =====
+window.del = async(id)=>{
+ await deleteDoc(doc(db,"records",id));
+};
 
- if(chart)chart.destroy()
+// ===== 圖表（修正）=====
+let chart;
+function renderChart(data){
+ const map={};
+ data.forEach(r=>map[r.category]=(map[r.category]||0)+r.amount);
+
+ if(chart) chart.destroy();
+
  chart=new Chart(chartCanvas,{
-   type:"pie",
-   data:{labels:Object.keys(map),datasets:[{data:Object.values(map)}]}
- })
+  type:"doughnut",
+  data:{
+   labels:Object.keys(map),
+   datasets:[{data:Object.values(map)}]
+  }
+ });
 }
 
 // ===== 地點 =====
-function addLocation(){
- if(!window.lat)return alert("請開啟GPS")
+window.addLocation = async ()=>{
+ await addDoc(locRef,{
+  familyId,
+  name:locName.value,
+  lat, lng,
+  radius:+locRadius.value||150,
+  category:locCategory.value,
+  note:locNote.value
+ });
+};
 
- const d=getLocations()
- const loc={
-   name:locName.value,
-   lat:lat,
-   lng:lng,
-   radius:+locRadius.value||150,
-   category:locCategory.value,
-   note:locNote.value
- }
+onSnapshot(locRef,snap=>{
+ const data=[];
+ snap.forEach(doc=>{
+  const d=doc.data();
+  if(d.familyId===familyId){
+    data.push({...d,id:doc.id});
+  }
+ });
+ renderLocations(data);
+});
 
- if(editLocIndex!==null){
-   d[editLocIndex]=loc
-   editLocIndex=null
- }else{
-   d.push(loc)
- }
-
- saveLocations(d)
- renderLocations()
+function renderLocations(data){
+ locationList.innerHTML=data.map(l=>`
+ <li>${l.name} (${l.radius}m)
+ <button onclick="delLoc('${l.id}')">刪</button>
+ </li>`).join("");
 }
 
-function editLocation(i){
- const l=getLocations()[i]
- locName.value=l.name
- locCategory.value=l.category
- locNote.value=l.note
- locRadius.value=l.radius
- editLocIndex=i
-}
+window.delLoc = async(id)=>{
+ await deleteDoc(doc(db,"locations",id));
+};
 
-function deleteLocation(i){
- const d=getLocations()
- d.splice(i,1)
- saveLocations(d)
- renderLocations()
-}
-
-function renderLocations(){
- locationList.innerHTML=getLocations().map((l,i)=>`
-  <li>
-   ${l.name} (${l.radius}m)
-   <br>
-   <button onclick="editLocation(${i})">編輯</button>
-   <button onclick="deleteLocation(${i})">刪除</button>
-  </li>
- `).join("")
-}
-
-// ===== render =====
-function renderAll(){
- renderRecords()
- renderChart()
- renderLocations()
-}
-
-initGPS()
-renderAll()
+// ===== tab =====
+window.showTab=(t)=>{
+ ["expense","chart","location"].forEach(id=>{
+  document.getElementById("tab-"+id).classList.add("hidden");
+ });
+ document.getElementById("tab-"+t).classList.remove("hidden");
+ document.querySelectorAll(".tabs button").forEach(b=>b.classList.remove("active"));
+ event.target.classList.add("active");
+};
 </script>
 
 </body>
