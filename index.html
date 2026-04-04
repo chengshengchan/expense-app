@@ -75,7 +75,12 @@ import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebas
 import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
 const firebaseConfig = {
-  // 🔥 你的 config
+  apiKey: "AIzaSyCflvPNFJpZwdLedNuyAFxG_4Fl8g0yuXU",
+  authDomain: "family-expense-d3fc6.firebaseapp.com",
+  projectId: "family-expense-d3fc6",
+  storageBucket: "family-expense-d3fc6.firebasestorage.app",
+  messagingSenderId: "1082949186120",
+  appId: "1:1082949186120:web:b08dede5942191c6749e7d"
 };
 
 const app = initializeApp(firebaseConfig);
@@ -86,6 +91,7 @@ const recordRef = collection(db,"records");
 const locRef = collection(db,"locations");
 
 let chart;
+let currentLocations = [];
 
 // ===== 記帳 =====
 window.saveRecord = async ()=>{
@@ -99,15 +105,22 @@ window.saveRecord = async ()=>{
 };
 
 // ===== 即時同步 =====
-onSnapshot(recordRef,snap=>{
-  const data=[];
-  snap.forEach(d=>{
-    if(d.data().familyId===familyId){
-      data.push({...d.data(),id:d.id});
+onSnapshot(locRef, snap => {
+  const data = [];
+
+  snap.forEach(doc => {
+    const d = doc.data();
+    if (d.familyId === familyId) {
+      data.push({ ...d, id: doc.id });
     }
   });
-  renderRecords(data);
-  renderChart(data);
+
+  renderLocations(data);
+
+  currentLocations = data;
+
+  // 🔥 關鍵這行
+  applyGPSAutoFill(currentLocations);
 });
 
 function renderRecords(data){
@@ -169,6 +182,51 @@ onSnapshot(locRef,snap=>{
   renderLocations(data);
 });
 
+if (t === "expense") {
+  applyGPSAutoFill(currentLocations);
+}
+
+function applyGPSAutoFill(locations) {
+  if (!navigator.geolocation) return;
+
+  navigator.geolocation.getCurrentPosition(pos => {
+    const lat = pos.coords.latitude;
+    const lng = pos.coords.longitude;
+
+    let nearest = null;
+    let minDist = Infinity;
+
+    locations.forEach(l => {
+      const d = getDistance(lat, lng, l.lat, l.lng);
+      if (d < l.radius && d < minDist) {
+        nearest = l;
+        minDist = d;
+      }
+    });
+
+    if (nearest) {
+      category.value = nearest.category;
+      note.value = nearest.note;
+      hint.innerText = "📍 " + nearest.name;
+    }
+  });
+}
+
+function getDistance(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const toRad = x => x * Math.PI / 180;
+
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+
+  const a =
+    Math.sin(dLat/2) ** 2 +
+    Math.cos(toRad(lat1)) *
+    Math.cos(toRad(lat2)) *
+    Math.sin(dLon/2) ** 2;
+
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
 function renderLocations(data){
   locationList.innerHTML=data.map(l=>`
     <li>
